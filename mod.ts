@@ -9,23 +9,25 @@ const c256 = [
     201, 202, 203, 204, 205, 206, 207, 208, 209, 214, 215, 220, 221,
 ]
 
-interface LoggerLevelConfig {
-    base: number
-    [K: string]: LoggerLevel
+export namespace Logger {
+    export interface LevelConfig {
+        base: number
+        [K: string]: Level
+    }
+
+    export type Level = number | LevelConfig
+    export type Function = (format: any, ...param: any[]) => void
+    export type Type = 'success' | 'error' | 'info' | 'warn' | 'debug'
+
+    export interface Target {
+        noColor?: boolean
+        showDiff?: boolean
+        showTime?: string
+        print(text: string): void
+    }
 }
 
-type LoggerLevel = number | LoggerLevelConfig
-type LoggerFunction = (format: any, ...param: any[]) => void
-type LoggerType = 'success' | 'error' | 'info' | 'warn' | 'debug'
-
-interface LoggerTarget {
-    noColor?: boolean
-    showDiff?: boolean
-    showTime?: string
-    print(text: string): void
-}
-
-export interface Logger extends Record<LoggerType, LoggerFunction> { }
+export interface Logger extends Record<Logger.Type, Logger.Function> { }
 
 export class Logger {
     // log levels
@@ -41,24 +43,24 @@ export class Logger {
     static colors = c256
     static instances: Record<string, Logger> = {}
 
-    static targets: LoggerTarget[] = [{
+    static targets: Logger.Target[] = [{
         noColor: Deno.noColor,
         print(text: string) {
             console.log(text)
         },
     }]
 
-    static formatters: Record<string, (value: any, target: LoggerTarget, logger: Logger) => string> = {
+    static formatters: Record<string, (value: any, target: Logger.Target, logger: Logger) => string> = {
         c: (value, target, logger) => Logger.color(target, logger.code, value),
         C: (value, target) => Logger.color(target, 15, value, ';1'),
         o: (value, target) => Deno.inspect(value, { colors: !target.noColor }).replace(/\s*\n\s*/g, ' '),
     }
 
-    static levels: LoggerLevelConfig = {
+    static levels: Logger.LevelConfig = {
         base: 2,
     }
 
-    static color(target: LoggerTarget, code: number, value: any, decoration = '') {
+    static color(target: Logger.Target, code: number, value: any, decoration = '') {
         if (target.noColor) return '' + value
         return `\u001b[3${code < 8 ? code : '8;5;' + code}${target.noColor ? '' : decoration}m${value}\u001b[0m`
     }
@@ -90,7 +92,7 @@ export class Logger {
         return new Logger(`${this.name}:${namespace}`)
     }
 
-    createMethod(name: LoggerType, prefix: string, minLevel: number) {
+    createMethod(name: Logger.Type, prefix: string, minLevel: number) {
         this[name] = (...args) => {
             if (this.level < minLevel) return
             const now = Date.now()
@@ -111,11 +113,11 @@ export class Logger {
         }
     }
 
-    private color(target: LoggerTarget, value: any, decoration = '') {
+    private color(target: Logger.Target, value: any, decoration = '') {
         return Logger.color(target, this.code, value, decoration)
     }
 
-    private format(target: LoggerTarget, indent: number, ...args: any[]) {
+    private format(target: Logger.Target, indent: number, ...args: any[]) {
         if (args[0] instanceof Error) {
             args[0] = args[0].stack || args[0].message
         } else if (typeof args[0] !== 'string') {
@@ -140,7 +142,7 @@ export class Logger {
 
     get level() {
         const paths = this.name.split(':')
-        let config: LoggerLevel = Logger.levels
+        let config: Logger.Level = Logger.levels
         do {
             config = config[paths.shift()!] ?? config['base']
         } while (paths.length && typeof config === 'object')

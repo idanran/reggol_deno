@@ -27,9 +27,9 @@ export namespace Logger {
     }
 }
 
-export default interface Logger extends Record<Logger.Type, Logger.Function> { }
+export interface Logger extends Record<Logger.Type, Logger.Function> { }
 
-export default class Logger {
+export class Logger {
     // log levels
     static readonly SILENT = 0
     static readonly SUCCESS = 1

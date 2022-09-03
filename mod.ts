@@ -1,6 +1,9 @@
-import { Time } from "https://cdn.skypack.dev/cosmokit@1.1.2?dts"
+// deno-lint-ignore-file no-explicit-any
+import { Time } from "npm:cosmokit@^1.2.1"
 import { sprintf } from 'https://deno.land/std@0.143.0/fmt/printf.ts'
+import { stderr } from 'npm:supports-color@^8.1.1'
 
+const c16 = [6, 2, 3, 4, 5, 1]
 const c256 = [
     20, 21, 26, 27, 32, 33, 38, 39, 40, 41, 42, 43, 44, 45, 56, 57, 62,
     63, 68, 69, 74, 75, 76, 77, 78, 79, 80, 81, 92, 93, 98, 99, 112, 113,
@@ -9,6 +12,7 @@ const c256 = [
     201, 202, 203, 204, 205, 206, 207, 208, 209, 214, 215, 220, 221,
 ]
 
+// deno-lint-ignore no-namespace
 export namespace Logger {
     export interface LevelConfig {
         base: number
@@ -20,13 +24,14 @@ export namespace Logger {
     export type Type = 'success' | 'error' | 'info' | 'warn' | 'debug'
 
     export interface Target {
-        noColor?: boolean
+        colors?: number
         showDiff?: boolean
         showTime?: string
         print(text: string): void
     }
 }
 
+// deno-lint-ignore no-empty-interface
 export interface Logger extends Record<Logger.Type, Logger.Function> { }
 
 export class Logger {
@@ -40,20 +45,19 @@ export class Logger {
 
     // global config
     static timestamp = 0
-    static colors = c256
     static instances: Record<string, Logger> = {}
 
     static targets: Logger.Target[] = [{
-        noColor: Deno.noColor,
+        colors: stderr && stderr.level,
         print(text: string) {
             console.log(text)
         },
     }]
 
     static formatters: Record<string, (value: any, target: Logger.Target, logger: Logger) => string> = {
-        c: (value, target, logger) => Logger.color(target, logger.code, value),
+        c: (value, target, logger) => Logger.color(target, Logger.code(logger.name, target), value),
         C: (value, target) => Logger.color(target, 15, value, ';1'),
-        o: (value, target) => Deno.inspect(value, { colors: !target.noColor }).replace(/\s*\n\s*/g, ' '),
+        o: (value, target) => Deno.inspect(value, { colors: !!target.colors }).replace(/\s*\n\s*/g, ' '),
     }
 
     static levels: Logger.LevelConfig = {
@@ -61,26 +65,24 @@ export class Logger {
     }
 
     static color(target: Logger.Target, code: number, value: any, decoration = '') {
-        if (target.noColor) return '' + value
-        return `\u001b[3${code < 8 ? code : '8;5;' + code}${target.noColor ? '' : decoration}m${value}\u001b[0m`
+        if (!target.colors) return '' + value
+        return `\u001b[3${code < 8 ? code : '8;5;' + code}${target.colors >= 2 ? decoration : ''}m${value}\u001b[0m`
     }
 
-    static code(name: string) {
+    static code(name: string, target: Logger.Target) {
         let hash = 0
         for (let i = 0; i < name.length; i++) {
             hash = ((hash << 3) - hash) + name.charCodeAt(i)
             hash |= 0
         }
-        return Logger.colors[Math.abs(hash) % Logger.colors.length]
+        const colors = target.colors! >= 2 ? c256 : target.colors! >= 1 ? c16 : []
+        return colors[Math.abs(hash) % colors.length]
     }
-
-    private code!: number;
 
     constructor(public name: string) {
         if (name in Logger.instances) return Logger.instances[name]
 
         Logger.instances[name] = this
-        this.code = Logger.code(name)
         this.createMethod('success', '[S] ', Logger.SUCCESS)
         this.createMethod('error', '[E] ', Logger.ERROR)
         this.createMethod('info', '[I] ', Logger.INFO)
@@ -114,7 +116,8 @@ export class Logger {
     }
 
     private color(target: Logger.Target, value: any, decoration = '') {
-        return Logger.color(target, this.code, value, decoration)
+        const code = Logger.code(this.name, target)
+        return Logger.color(target, code, value, decoration)
     }
 
     private format(target: Logger.Target, indent: number, ...args: any[]) {

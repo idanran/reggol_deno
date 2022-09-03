@@ -1,7 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { Time } from 'https://esm.sh/cosmokit@^1.2.1'
 import { sprintf } from 'https://deno.land/std@0.154.0/fmt/printf.ts'
-import { stderr } from 'https://cdn.skypack.dev/supports-color@^8.1.1?dts'
 
 const c16 = [6, 2, 3, 4, 5, 1]
 const c256 = [
@@ -48,7 +47,7 @@ export class Logger {
     static instances: Record<string, Logger> = {}
 
     static targets: Logger.Target[] = [{
-        colors: stderr && stderr.level,
+        colors: 256,
         print(text: string) {
             console.log(text)
         },

@@ -1,6 +1,5 @@
-// deno-lint-ignore-file no-explicit-any
-import { Time } from 'https://esm.sh/cosmokit@^1.2.1'
-import { sprintf } from 'https://deno.land/std@0.154.0/fmt/printf.ts'
+// deno-lint-ignore-file no-namespace no-explicit-any
+import { Time } from 'https://cdn.skypack.dev/cosmokit@^1.3.3?dts'
 
 const c16 = [6, 2, 3, 4, 5, 1]
 const c256 = [
@@ -11,7 +10,10 @@ const c256 = [
     201, 202, 203, 204, 205, 206, 207, 208, 209, 214, 215, 220, 221,
 ]
 
-// deno-lint-ignore no-namespace
+function isAggregateError(error: any): error is Error & { errors: Error[] } {
+    return error instanceof Error && Array.isArray((error as any)['errors'])
+}
+
 export namespace Logger {
     export interface LevelConfig {
         base: number
@@ -21,11 +23,25 @@ export namespace Logger {
     export type Level = number | LevelConfig
     export type Function = (format: any, ...param: any[]) => void
     export type Type = 'success' | 'error' | 'info' | 'warn' | 'debug'
+    export type Formatter = (value: any, target: Logger.Target, logger: Logger) => any
+
+    export interface LabelStyle {
+        width?: number
+        margin?: number
+        align?: 'left' | 'right'
+    }
 
     export interface Target {
-        colors?: number
+        /**
+         * - 0: no color support
+         * - 1: 16 color support
+         * - 2: 256 color support
+         * - 3: truecolor support
+         */
+        colors?: false | number
         showDiff?: boolean
         showTime?: string
+        label?: LabelStyle
         print(text: string): void
     }
 }
@@ -44,19 +60,19 @@ export class Logger {
 
     // global config
     static timestamp = 0
-    static instances: Record<string, Logger> = {}
-
     static targets: Logger.Target[] = [{
-        colors: 256,
+        colors: 2,
         print(text: string) {
             console.log(text)
         },
     }]
 
-    static formatters: Record<string, (value: any, target: Logger.Target, logger: Logger) => string> = {
-        c: (value, target, logger) => Logger.color(target, Logger.code(logger.name, target), value),
-        C: (value, target) => Logger.color(target, 15, value, ';1'),
-        o: (value, target) => Deno.inspect(value, { colors: !!target.colors }).replace(/\s*\n\s*/g, ' '),
+    // global registry
+    static formatters: Record<string, Logger.Formatter> = Object.create(null)
+    static instances: Record<string, Logger> = Object.create(null)
+
+    static format(name: string, formatter: Logger.Formatter) {
+        this.formatters[name] = formatter
     }
 
     static levels: Logger.LevelConfig = {
@@ -82,11 +98,11 @@ export class Logger {
         if (name in Logger.instances) return Logger.instances[name]
 
         Logger.instances[name] = this
-        this.createMethod('success', '[S] ', Logger.SUCCESS)
-        this.createMethod('error', '[E] ', Logger.ERROR)
-        this.createMethod('info', '[I] ', Logger.INFO)
-        this.createMethod('warn', '[W] ', Logger.WARN)
-        this.createMethod('debug', '[D] ', Logger.DEBUG)
+        this.createMethod('success', '[S]', Logger.SUCCESS)
+        this.createMethod('error', '[E]', Logger.ERROR)
+        this.createMethod('info', '[I]', Logger.INFO)
+        this.createMethod('warn', '[W]', Logger.WARN)
+        this.createMethod('debug', '[D]', Logger.DEBUG)
     }
 
     extend = (namespace: string) => {
@@ -95,15 +111,29 @@ export class Logger {
 
     createMethod(name: Logger.Type, prefix: string, minLevel: number) {
         this[name] = (...args) => {
+            if (args.length === 1 && isAggregateError(args[0])) {
+                args[0].errors.forEach(error => this[name](error))
+                return
+            }
+
             if (this.level < minLevel) return
             const now = Date.now()
             for (const target of Logger.targets) {
-                let indent = 4, output = ''
+                const space = ' '.repeat(target.label?.margin ?? 1)
+                let indent = 3 + space.length, output = ''
                 if (target.showTime) {
-                    indent += target.showTime.length + 1
-                    output += Logger.color(target, 8, Time.template(target.showTime)) + ' '
+                    indent += target.showTime.length + space.length
+                    output += Logger.color(target, 8, Time.template(target.showTime)) + space
                 }
-                output += prefix + this.color(target, this.name, ';1') + ' ' + this.format(target, indent, ...args)
+                const label = this.color(target, this.name, ';1')
+                const padLength = (target.label?.width ?? 0) + label.length - this.name.length
+                if (target.label?.align === 'right') {
+                    output += label.padStart(padLength) + space + prefix + space
+                    indent += (target.label.width ?? 0) + space.length
+                } else {
+                    output += prefix + space + label.padEnd(padLength) + space
+                }
+                output += this.format(target, indent, ...args)
                 if (target.showDiff) {
                     const diff = Logger.timestamp && now - Logger.timestamp
                     output += this.color(target, ' +' + Time.format(diff))
@@ -122,24 +152,27 @@ export class Logger {
     private format(target: Logger.Target, indent: number, ...args: any[]) {
         if (args[0] instanceof Error) {
             args[0] = args[0].stack || args[0].message
+            args.unshift('%s')
         } else if (typeof args[0] !== 'string') {
-            args.unshift('%O')
+            args.unshift('%o')
         }
 
-        let index = 0
-        args[0] = (args[0] as string).replace(/%([a-zA-Z%])/g, (match, format) => {
+        let format: string = args.shift()
+        format = format.replace(/%([a-zA-Z%])/g, (match, char) => {
             if (match === '%%') return '%'
-            index += 1
-            const formatter = Logger.formatters[format]
+            const formatter = Logger.formatters[char]
             if (typeof formatter === 'function') {
-                match = formatter(args[index], target, this)
-                args.splice(index, 1)
-                index -= 1
+                const value = args.shift()
+                return formatter(value, target, this)
             }
             return match
         }).replace(/\n/g, '\n' + ' '.repeat(indent))
 
-        return sprintf(args[0], ...args.slice(1))
+        for (const arg of args) {
+            format += ' ' + Logger.formatters['o'](arg, target, this)
+        }
+
+        return format
     }
 
     get level() {
@@ -155,14 +188,27 @@ export class Logger {
         const paths = this.name.split(':')
         let config = Logger.levels
         while (paths.length > 1) {
-            const name = paths.shift()
-            const value = config[name!]
+            const name = paths.shift()!
+            const value = config[name]
             if (typeof value === 'object') {
                 config = value
             } else {
-                config = config[name!] = { base: value ?? config.base }
+                config = config[name] = { base: value ?? config.base }
             }
         }
         config[paths[0]] = value
     }
 }
+
+Logger.format('s', (value) => value)
+Logger.format('d', (value) => +value)
+Logger.format('j', (value) => JSON.stringify(value))
+Logger.format('c', (value, target, logger) => {
+    return Logger.color(target, Logger.code(logger.name, target), value)
+})
+Logger.format('C', (value, target) => {
+    return Logger.color(target, 15, value, ';1')
+})
+Logger.format('o', (value, target) => {
+    return Deno.inspect(value, { colors: !!target.colors }).replace(/\s*\n\s*/g, ' ')
+})

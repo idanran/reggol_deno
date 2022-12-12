@@ -1,5 +1,6 @@
-// deno-lint-ignore-file no-namespace no-explicit-any
-import { Time } from 'https://cdn.skypack.dev/cosmokit@^1.3.3?dts'
+// deno-lint-ignore-file no-namespace no-explicit-any no-empty-interface
+import { Time } from 'npm:cosmokit@^1.3.6'
+import { getColorSupport } from 'npm:spcolor@^1.0.4'
 
 const c16 = [6, 2, 3, 4, 5, 1]
 const c256 = [
@@ -42,11 +43,11 @@ export namespace Logger {
         showDiff?: boolean
         showTime?: string
         label?: LabelStyle
+        maxLength?: number
         print(text: string): void
     }
 }
 
-// deno-lint-ignore no-empty-interface
 export interface Logger extends Record<Logger.Type, Logger.Function> { }
 
 export class Logger {
@@ -61,7 +62,7 @@ export class Logger {
     // global config
     static timestamp = 0
     static targets: Logger.Target[] = [{
-        colors: 2,
+        colors: getColorSupport().level,
         print(text: string) {
             console.log(text)
         },
@@ -137,6 +138,10 @@ export class Logger {
                 if (target.showDiff) {
                     const diff = Logger.timestamp && now - Logger.timestamp
                     output += this.color(target, ' +' + Time.format(diff))
+                }
+                const { maxLength = 1024 } = target
+                if (output.length > maxLength) {
+                    output = output.slice(0, maxLength) + '...'
                 }
                 target.print(output)
             }

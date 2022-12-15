@@ -139,7 +139,7 @@ export class Logger {
                     const diff = Logger.timestamp && now - Logger.timestamp
                     output += this.color(target, ' +' + Time.format(diff))
                 }
-                const { maxLength = 1024 } = target
+                const { maxLength = 10240 } = target
                 if (output.length > maxLength) {
                     output = output.slice(0, maxLength) + '...'
                 }

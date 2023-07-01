@@ -32,6 +32,15 @@ export namespace Logger {
         align?: 'left' | 'right'
     }
 
+    export interface Record {
+        id: number
+        name: string
+        type: Logger.Type
+        level: number
+        content: string
+        timestamp: number
+    }
+
     export interface Target {
         /**
          * - 0: no color support
@@ -44,7 +53,8 @@ export namespace Logger {
         showTime?: string
         label?: LabelStyle
         maxLength?: number
-        print(text: string): void
+        record?(record: Record): void
+        print?(text: string): void
     }
 }
 
@@ -60,10 +70,11 @@ export class Logger {
     static readonly DEBUG = 3
 
     // global config
+    static id = 0
     static timestamp = 0
     static targets: Logger.Target[] = [{
         colors: getColorSupport().level,
-        print(text: string) {
+        print(text) {
             console.log(text)
         },
     }]
@@ -91,7 +102,7 @@ export class Logger {
             hash = ((hash << 3) - hash) + name.charCodeAt(i)
             hash |= 0
         }
-        const colors = target.colors! >= 2 ? c256 : target.colors! >= 1 ? c16 : []
+        const colors = !target.colors ? [] : target.colors >= 2 ? c256 : c16
         return colors[Math.abs(hash) % colors.length]
     }
 
@@ -99,27 +110,45 @@ export class Logger {
         if (name in Logger.instances) return Logger.instances[name]
 
         Logger.instances[name] = this
-        this.createMethod('success', '[S]', Logger.SUCCESS)
-        this.createMethod('error', '[E]', Logger.ERROR)
-        this.createMethod('info', '[I]', Logger.INFO)
-        this.createMethod('warn', '[W]', Logger.WARN)
-        this.createMethod('debug', '[D]', Logger.DEBUG)
+        this.createMethod('success', Logger.SUCCESS)
+        this.createMethod('error', Logger.ERROR)
+        this.createMethod('info', Logger.INFO)
+        this.createMethod('warn', Logger.WARN)
+        this.createMethod('debug', Logger.DEBUG)
     }
 
     extend = (namespace: string) => {
         return new Logger(`${this.name}:${namespace}`)
     }
 
-    createMethod(name: Logger.Type, prefix: string, minLevel: number) {
-        this[name] = (...args) => {
+    warning = (format: any, ...args: any[]) => {
+        this.warn(format, ...args)
+    }
+
+    createMethod(type: Logger.Type, level: number) {
+        this[type] = (...args) => {
             if (args.length === 1 && isAggregateError(args[0])) {
-                args[0].errors.forEach(error => this[name](error))
+                args[0].errors.forEach(error => this[type](error))
                 return
             }
 
-            if (this.level < minLevel) return
-            const now = Date.now()
+            if (this.level < level) return
+            const id = ++Logger.id
+            const timestamp = Date.now()
             for (const target of Logger.targets) {
+                const content = this.format(target, ...args)
+                if (target.record) {
+                    target.record({
+                        id,
+                        type,
+                        level,
+                        content,
+                        timestamp,
+                        name: this.name,
+                    })
+                    continue
+                }
+                const prefix = `[${type[0].toUpperCase()}]`
                 const space = ' '.repeat(target.label?.margin ?? 1)
                 let indent = 3 + space.length, output = ''
                 if (target.showTime) {
@@ -134,18 +163,17 @@ export class Logger {
                 } else {
                     output += prefix + space + label.padEnd(padLength) + space
                 }
-                output += this.format(target, indent, ...args)
+                output += content.replace(/\n/g, '\n' + ' '.repeat(indent))
                 if (target.showDiff) {
-                    const diff = Logger.timestamp && now - Logger.timestamp
+                    const diff = Logger.timestamp && timestamp - Logger.timestamp
                     output += this.color(target, ' +' + Time.format(diff))
                 }
-                const { maxLength = 10240 } = target
-                if (output.length > maxLength) {
-                    output = output.slice(0, maxLength) + '...'
-                }
-                target.print(output)
+                const { maxLength = 1024, print = console.log } = target
+                print(output.split(/\r?\n/g).map(line => {
+                    return line.slice(0, maxLength) + (line.length > maxLength ? '...' : '')
+                }).join('\n'))
             }
-            Logger.timestamp = now
+            Logger.timestamp = timestamp
         }
     }
 
@@ -154,7 +182,7 @@ export class Logger {
         return Logger.color(target, code, value, decoration)
     }
 
-    private format(target: Logger.Target, indent: number, ...args: any[]) {
+    private format(target: Logger.Target, ...args: any[]) {
         if (args[0] instanceof Error) {
             args[0] = args[0].stack || args[0].message
             args.unshift('%s')
@@ -171,7 +199,7 @@ export class Logger {
                 return formatter(value, target, this)
             }
             return match
-        }).replace(/\n/g, '\n' + ' '.repeat(indent))
+        })
 
         for (const arg of args) {
             format += ' ' + Logger.formatters['o'](arg, target, this)

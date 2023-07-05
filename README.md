@@ -7,5 +7,5 @@ Logger for professionals.
 
 ## Usage
 ```ts
-import { Logger } from 'https://deno.land/x/reggol_deno@1.4.2/mod.ts'
+import { Logger } from 'https://deno.land/x/reggol_deno@1.4.4/mod.ts'
 ```
